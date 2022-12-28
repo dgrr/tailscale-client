@@ -4,6 +4,15 @@ Tailscale client using [Wails](https://wails.io).
 
 ![Image](_images/example.png)
 
+# Installation
+
+```bash
+go install github.com/wailsapp/wails/v2/cmd/wails@latest
+git clone https://github.com/dgrr/tailscale-client
+cd tailscale-client
+make install
+```
+
 # Why a desktop application with JS? WHY!!!???
 
 I am aware that there is some kind of client desktop application for MacOS and maybe Windows,
