@@ -17,6 +17,7 @@ to learn more JS than it is required, I can just use Golang for the backend!
 
 # Features
 
+* File upload and reception.
 * Account switching (ugly but works).
 * Host listing (it is more prepared for headscale than tailscale, so I am open to criticism).
 * Select an exit node.
