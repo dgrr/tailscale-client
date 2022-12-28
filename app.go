@@ -36,8 +36,8 @@ func NewApp() *App {
 	return &App{}
 }
 
-func notify(msg string) {
-	beeep.Notify("Tailscale", msg, "icon/on.png")
+func notify(format string, args ...interface{}) {
+	beeep.Notify("Tailscale", fmt.Sprintf(format, args...), "icon/on.png")
 }
 
 // startup is called when the app starts. The context is saved
@@ -131,6 +131,10 @@ func (app *App) UploadFile(dnsName string) {
 		panic(err)
 	}
 
+	if len(filename) == 0 {
+		return
+	}
+
 	file, err := os.Open(filename)
 	if err != nil {
 		panic(err)
@@ -143,6 +147,8 @@ func (app *App) UploadFile(dnsName string) {
 	if err != nil {
 		log.Printf("error uploading file to %s: %s\n", dnsName, err)
 	}
+
+	notify("File %s sent to %s", stat.Name(), dnsName)
 }
 
 func (app *App) AcceptFile(filename string) {
@@ -165,13 +171,16 @@ func (app *App) AcceptFile(filename string) {
 	}
 	defer r.Close()
 
-	file, err := os.Create(filepath.Join(dir, filename))
+	dstPath := filepath.Join(dir, filename)
+	file, err := os.Create(dstPath)
 	if err != nil {
 		panic(err)
 	}
 	defer file.Close()
 
 	_, _ = io.Copy(file, r)
+
+	notify("Downloaded %s to %s", filename, dstPath)
 }
 
 func (app *App) RemoveFile(filename string) {
@@ -233,9 +242,9 @@ func (app *App) SetExitNode(dnsName string) {
 	runtime.EventsEmit(app.ctx, "exit_node_connect")
 
 	if peer.ExitNode {
-		notify(fmt.Sprintf("Removed exit node %s", peer.DNSName))
+		notify("Removed exit node %s", peer.DNSName)
 	} else {
-		notify(fmt.Sprintf("Using %s as exit node", peer.DNSName))
+		notify("Using %s as exit node", peer.DNSName)
 	}
 }
 
