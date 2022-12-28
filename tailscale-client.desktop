@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Tailscale
+Comment=An unofficial Tailscale client.
+Exec=sh -c "$HOME/.local/bin/tailscale-client"
+Icon=com.tailscale
+Type=Application
+Categories=Network;
+SingleMainWindow=true
+X-GNOME-UsesNotifications=true
