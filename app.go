@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/netip"
 	"strings"
@@ -27,11 +28,16 @@ func NewApp() *App {
 	return &App{}
 }
 
+func notify(msg string) {
+	beeep.Notify("Tailscale", msg, "icon/on.png")
+}
+
 // startup is called when the app starts. The context is saved
 // so we can call the runtime methods
 func (app *App) startup(ctx context.Context) {
 	app.ctx = ctx
-	beeep.Notify("Tailscale", "tailscale started", "icon/on.png")
+
+	notify("Tailscale started")
 
 	go app.watchFiles()
 	go app.watchIPN()
@@ -89,8 +95,32 @@ func (app *App) SetExitNode(dnsName string) {
 	}
 
 	peer := status.Peer[peers[i]]
-	// TODO: get prefs, set prefs
-	_ = peer
+
+	prefs := &ipn.MaskedPrefs{
+		Prefs:         ipn.Prefs{},
+		ExitNodeIPSet: true,
+		ExitNodeIDSet: true,
+	}
+
+	if !peer.ExitNode {
+		err = prefs.SetExitNodeIP(peer.DNSName, status)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	_, err = app.client.EditPrefs(app.ctx, prefs)
+	if err != nil {
+		log.Println(err)
+	}
+
+	runtime.EventsEmit(app.ctx, "exit_node_connect")
+
+	if peer.ExitNode {
+		notify(fmt.Sprintf("Removed exit node %s", peer.DNSName))
+	} else {
+		notify(fmt.Sprintf("Using %s as exit node", peer.DNSName))
+	}
 }
 
 func (app *App) Accounts() []string {

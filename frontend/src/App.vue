@@ -1,6 +1,6 @@
 <script>
-import {Accounts, CurrentAccount, Peers, Self, SwitchTo} from "../wailsjs/go/main/App";
-import {EventsOn} from "../wailsjs/runtime";
+import {Accounts, CurrentAccount, Peers, Self, SetExitNode, SwitchTo} from "../wailsjs/go/main/App";
+import {EventsOn, EventsOnce} from "../wailsjs/runtime";
 
 export default {
   data() {
@@ -9,7 +9,7 @@ export default {
       other_accounts: [],
       peers: [],
       self: {},
-      selected_peer: {},
+      selected_peer: null,
     }
   },
   methods: {
@@ -18,8 +18,9 @@ export default {
       this.other_accounts = await Accounts();
       this.self = await Self();
       this.peers = await Peers();
-      this.selected_peer = this.self;
-      console.log(this.peers)
+      if (this.selected_peer === null) {
+        this.selected_peer = this.self;
+      }
     },
     switchAccount: async function(event) {
       const name = event.target.text;
@@ -27,13 +28,17 @@ export default {
       await SwitchTo(name)
       await this.load()
     },
+    setExitNode: async function(event) {
+      console.log("setting exit node")
+      event.target.disabled = true;
+      EventsOnce('exit_node_connect', () => {
+        event.target.disabled = false;
+      })
+      await SetExitNode(this.selected_peer.dns_name);
+    }
   },
   mounted() {
     this.load();
-    this.timer = setInterval(() => {
-      this.load()
-    }, 5000);
-
     EventsOn('update_all', () => this.load())
   },
   unmounted() {
@@ -46,7 +51,7 @@ export default {
   <div class="flex h-screen">
     <div class="w-1/3 h-full border-left-solid border-2 border-l-0 border-t-0 border-b-0 border-sky-500 overflow-scroll">
       <div class="py-4 px-3 rounded">
-        <ul class="list-disc space-y-2">
+        <ul v-if="self != null" class="list-disc space-y-2">
           <li>
             <div class="flex-1 min-w-0">
               <a href="#" @click="selected_peer = self" class="flex items-center p-2 text-base font-normal text-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">
@@ -135,7 +140,7 @@ export default {
           </transition>
         </Menu>
       </div>
-      <div class="flex flex-col mt-20 justify-center items-center px-2">
+      <div v-if="selected_peer != null" class="flex flex-col mt-20 justify-center items-center px-2">
         <div>
           <h2 class="mt-8 text-center text-2xl font-bold text-zinc-100 cursor-default select-none"> {{ selected_peer.name }} </h2>
           <div class=" text-sm text-zinc-300">
@@ -155,12 +160,14 @@ export default {
                 </button>
               </div>
             </div>
-            <div class="flex items-center justify-between">
+            <div v-if="selected_peer !== self" class="flex items-center justify-between">
               <p class="text-center text-md font-medium text-gray-900 truncate dark:text-white">
                 Use exit node
               </p>
               <label class="inline-flex relative items-center cursor-pointer">
-                <input type="checkbox" value="" class="sr-only peer">
+                <input v-if="!selected_peer.online || !selected_peer.exit_node_option" @click="setExitNode" type="checkbox" value="" class="sr-only peer" disabled>
+                <input v-else-if="selected_peer.exit_node" @click="setExitNode" type="checkbox" value="" class="sr-only peer" checked>
+                <input v-else @click="setExitNode" type="checkbox" value="" class="sr-only peer">
                 <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
               </label>
             </div>
