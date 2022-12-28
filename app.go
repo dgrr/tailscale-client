@@ -20,6 +20,8 @@ import (
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
+	"tailscale.com/net/tsaddr"
+	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 )
 
@@ -36,8 +38,25 @@ func NewApp() *App {
 	return &App{}
 }
 
+var iconPath = func() string {
+	_, err := os.Stat("icon/on.png")
+	if err == nil {
+		return "icon/on.png"
+	} else {
+		home, _ := os.UserHomeDir()
+		alterPath := filepath.Join(home, ".local", "share", "icons", "hicolor", "256x256", "apps", "com.tailscale.png")
+
+		_, err := os.Stat(alterPath)
+		if err == nil {
+			return alterPath
+		}
+
+		return ""
+	}
+}()
+
 func notify(format string, args ...interface{}) {
-	beeep.Notify("Tailscale", fmt.Sprintf(format, args...), "icon/on.png")
+	beeep.Notify("Tailscale", fmt.Sprintf(format, args...), iconPath)
 }
 
 // startup is called when the app starts. The context is saved
@@ -50,6 +69,7 @@ func (app *App) startup(ctx context.Context) {
 
 	go app.watchFiles()
 	go app.watchIPN()
+	// go app.pingPeers()
 
 	runtime.EventsOn(app.ctx, "file_upload", func(data ...interface{}) {
 		fmt.Println(data)
@@ -102,10 +122,61 @@ func (app *App) watchIPN() {
 				app.fileMod <- struct{}{}
 			}
 
+			if not.State != nil {
+				if *not.State == ipn.Running {
+					runtime.EventsEmit(app.ctx, "app_running")
+				} else {
+					runtime.EventsEmit(app.ctx, "app_not_running")
+				}
+			}
+
 			runtime.EventsEmit(app.ctx, "update_all")
 
 			log.Printf("IPN bus update: %v\n", not)
 		}
+	}
+}
+
+func (app *App) pingPeers() {
+	for {
+		status, err := app.client.Status(app.ctx)
+		if err != nil {
+			log.Println("Getting client status", err)
+			time.Sleep(time.Second * 10)
+			continue
+		}
+
+		for _, nodeKey := range status.Peers() {
+			peer := status.Peer[nodeKey]
+			if len(peer.TailscaleIPs) == 0 {
+				log.Printf("Peer %s doesn't have any IPs", peer.DNSName)
+				continue
+			}
+
+			log.Printf("Pinging %s", peer.TailscaleIPs[0])
+
+			ctx, cancelFn := context.WithCancel(app.ctx)
+			done := make(chan struct{}, 1)
+
+			go func() {
+				select {
+				case <-done:
+				case <-time.After(time.Second * 5):
+					cancelFn()
+				}
+			}()
+
+			res, err := app.client.Ping(ctx, peer.TailscaleIPs[0], tailcfg.PingICMP)
+			if err != nil {
+				log.Printf("Unable to ping %s: %s\n", peer.TailscaleIPs[0], err)
+			}
+
+			done <- struct{}{}
+
+			log.Println("Ping result", res)
+		}
+
+		time.Sleep(time.Second * 30)
 	}
 }
 
@@ -234,9 +305,32 @@ func (app *App) SetExitNode(dnsName string) {
 	}
 
 	if !peer.ExitNode {
-		err = prefs.SetExitNodeIP(peer.DNSName, status)
-		if err != nil {
-			panic(err)
+		success := false
+		ipsToTry := []string{
+			peer.DNSName,
+			peer.HostName,
+		}
+
+		for _, ip := range peer.TailscaleIPs {
+			ipsToTry = append(ipsToTry, ip.String())
+		}
+
+		for _, host := range ipsToTry {
+			log.Printf("Exit node as %s\n", host)
+
+			err = prefs.SetExitNodeIP(host, status)
+			if err != nil {
+				log.Printf("Setting exit node as %s: %s\n", host, err)
+				continue
+			}
+
+			success = true
+			break
+		}
+
+		if !success {
+			runtime.EventsEmit(app.ctx, "exit_node_connect")
+			return
 		}
 	}
 
@@ -251,6 +345,53 @@ func (app *App) SetExitNode(dnsName string) {
 		notify("Removed exit node %s", peer.DNSName)
 	} else {
 		notify("Using %s as exit node", peer.DNSName)
+	}
+}
+
+func (app *App) AdvertiseExitNode(dnsName string) {
+	status, err := app.client.Status(app.ctx)
+	if err != nil {
+		panic(err)
+	}
+
+	if status.Self.DNSName != dnsName {
+		return
+	}
+
+	curPrefs, err := app.client.GetPrefs(app.ctx)
+	if err != nil {
+		panic(err)
+	}
+
+	isAdvertise := curPrefs.AdvertisesExitNode()
+
+	prefs := &ipn.MaskedPrefs{
+		Prefs: ipn.Prefs{
+			AdvertiseRoutes: append([]netip.Prefix{},
+				tsaddr.AllIPv4(), tsaddr.AllIPv4(),
+			),
+		},
+		AdvertiseRoutesSet: true,
+	}
+
+	prefs.SetAdvertiseExitNode(!isAdvertise)
+
+	// if current settings is advertise, then remove
+	if isAdvertise {
+		prefs.Prefs.AdvertiseRoutes = nil
+	}
+
+	_, err = app.client.EditPrefs(app.ctx, prefs)
+	if err != nil {
+		log.Println(err)
+	}
+
+	runtime.EventsEmit(app.ctx, "advertise_exit_node_done")
+
+	if isAdvertise {
+		notify("Removed advertising node")
+	} else {
+		notify("Advertising as exit node")
 	}
 }
 
@@ -280,11 +421,6 @@ func (app *App) Accounts() []string {
 	)
 
 	return names
-}
-
-type Instance struct {
-	Files      []File      `json:"files"`
-	Namespaces []Namespace `json:"namespaces"`
 }
 
 type Namespace struct {
@@ -321,7 +457,16 @@ func (app *App) Self() Peer {
 	}
 
 	self := status.Self
-	return convertPeer(self)
+	peer := convertPeer(self)
+
+	curPrefs, err := app.client.GetPrefs(app.ctx)
+	if err != nil {
+		panic(err)
+	}
+
+	peer.ExitNodeOption = curPrefs.AdvertisesExitNode()
+
+	return peer
 }
 
 func convertPeer(status *ipnstate.PeerStatus) Peer {

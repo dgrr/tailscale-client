@@ -11,6 +11,7 @@ import {
   SetExitNode,
   SwitchTo,
   UploadFile,
+  AdvertiseExitNode,
 } from "../wailsjs/go/main/App";
 import {EventsEmit, EventsOn, EventsOnce} from "../wailsjs/runtime";
 
@@ -23,10 +24,15 @@ export default {
       namespaces: null,
       self: {},
       selected_peer: null,
+      app_running: false,
     }
   },
   methods: {
     load: async function() {
+      if (this.app_running) {
+        return;
+      }
+
       this.account = await CurrentAccount();
       this.other_accounts = await Accounts();
       this.files = await Files();
@@ -34,13 +40,19 @@ export default {
       this.self = await Self();
       if (this.selected_peer === null) {
         this.selected_peer = this.self;
+      } else {
+        this.namespaces.forEach(namespace => {
+          namespace.peers.forEach(peer => {
+            if (peer.dns_name === this.selected_peer.dns_name) {
+              this.selected_peer = peer;
+            }
+          })
+        })
       }
     },
     switchAccount: async function(event) {
       const name = event.target.text;
-      console.log("switch to", name);
       await SwitchTo(name)
-      await this.load()
     },
     setExitNode: async function(event) {
       console.log("setting exit node")
@@ -49,6 +61,15 @@ export default {
         event.target.disabled = false;
       })
       await SetExitNode(this.selected_peer.dns_name);
+    },
+    advertiseExitNode: async function(event) {
+      console.log("advertising exit node")
+      event.target.disabled = true;
+      EventsOnce('advertise_exit_node_done', async () => {
+        event.target.disabled = false;
+        this.self = await Self();
+      })
+      await AdvertiseExitNode(this.selected_peer.dns_name);
     },
     acceptFile: async function(name) {
       await AcceptFile(name)
@@ -137,6 +158,13 @@ export default {
     EventsOn('update_all', async () => await this.load())
     EventsOn('update_files', async () => {
       this.files = await Files()
+    })
+    EventsOn('app_running', () => {
+      this.app_running = true;
+    })
+    EventsOn('app_not_running', () => {
+      this.selected_peer = null;
+      this.app_running = false;
     })
   },
   unmounted() {
@@ -327,6 +355,16 @@ export default {
                 <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
               </label>
             </div>
+            <div v-if="selected_peer.dns_name === self.dns_name" class="flex items-center justify-between">
+              <p class="text-center text-md font-medium text-gray-900 truncate dark:text-white">
+                Advertise exit node
+              </p>
+              <label class="inline-flex relative items-center cursor-pointer">
+                <input v-if="selected_peer.exit_node_option" @click="advertiseExitNode" type="checkbox" value="" class="sr-only peer" checked>
+                <input v-else @click="advertiseExitNode" type="checkbox" value="" class="sr-only peer">
+                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+              </label>
+            </div>
             <div v-if="selected_peer.dns_name !== self.dns_name" class="flex items-center justify-center">
               <button type="button" @click="sendFile(selected_peer.dns_name)" class="text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-sm px-5 py-2.5 mr-2 mb-2 dark:bg-blue-600 dark:hover:bg-blue-700 focus:outline-none dark:focus:ring-blue-800">Send file</button>
             </div>
@@ -339,7 +377,6 @@ export default {
 
 <script setup>
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/vue'
-import { Popover, PopoverButton, PopoverPanel } from '@headlessui/vue'
 import { ChevronDownIcon } from '@heroicons/vue/20/solid'
 
 
