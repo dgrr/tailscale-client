@@ -58,6 +58,7 @@ func (app *App) startup(ctx context.Context) {
 
 func (app *App) watchFiles() {
 	prevFiles := 0
+
 	for {
 		select {
 		case <-time.After(time.Second * 10):
@@ -71,6 +72,11 @@ func (app *App) watchFiles() {
 
 		if len(files) != prevFiles {
 			prevFiles = len(files)
+
+			for _, file := range files {
+				notify("File %s available", file.Name)
+			}
+
 			runtime.EventsEmit(app.ctx, "update_files")
 		}
 	}

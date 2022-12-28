@@ -1,4 +1,6 @@
 
+.PHONY: build
+
 build:
 	wails build
 
