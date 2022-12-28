@@ -51,6 +51,9 @@ export default {
   },
   mounted() {
     this.load();
+    this.timer = setInterval(() => {
+      this.$forceUpdate()
+    }, 30_000)
     EventsOn('update_all', () => this.load())
   },
   unmounted() {
