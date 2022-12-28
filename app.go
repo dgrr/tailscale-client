@@ -6,11 +6,13 @@ import (
 	"log"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dgrr/tl"
 	"github.com/gen2brain/beeep"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"golang.design/x/clipboard"
 	"tailscale.com/client/tailscale"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
@@ -19,8 +21,9 @@ import (
 
 // App struct
 type App struct {
-	ctx    context.Context
-	client tailscale.LocalClient
+	ctx           context.Context
+	client        tailscale.LocalClient
+	initClipboard sync.Once
 }
 
 // NewApp creates a new App application struct
@@ -121,6 +124,15 @@ func (app *App) SetExitNode(dnsName string) {
 	} else {
 		notify(fmt.Sprintf("Using %s as exit node", peer.DNSName))
 	}
+}
+
+func (app *App) CopyClipboard(s string) {
+	app.initClipboard.Do(func() {
+		if err := clipboard.Init(); err != nil {
+			panic(err)
+		}
+	})
+	clipboard.Write(clipboard.FmtText, []byte(s))
 }
 
 func (app *App) Accounts() []string {

@@ -1,5 +1,5 @@
 <script>
-import {Accounts, CurrentAccount, Peers, Self, SetExitNode, SwitchTo} from "../wailsjs/go/main/App";
+import {Accounts, CopyClipboard, CurrentAccount, Peers, Self, SetExitNode, SwitchTo} from "../wailsjs/go/main/App";
 import {EventsOn, EventsOnce} from "../wailsjs/runtime";
 
 export default {
@@ -35,6 +35,18 @@ export default {
         event.target.disabled = false;
       })
       await SetExitNode(this.selected_peer.dns_name);
+    },
+    dateDiff: function(ref) {
+      const date = new Date(ref);
+      const now = new Date();
+      const res = (now - date) / 1000;
+      if (res < 3600) {
+        return Math.round(res/60) + " minutes ago";
+      } else if (res < 86400) {
+        return Math.round(res / 3600) + " hours ago";
+      } else {
+        return Math.round(res / 86400) + " days ago";
+      }
     }
   },
   mounted() {
@@ -91,6 +103,10 @@ export default {
                     <span v-if="peer.online" class="bg-green-100 text-green-800 text-xs font-semibold mr-2 px-2.5 py-0.5 rounded dark:bg-green-200 dark:text-green-800">
                       Online
                     </span>
+                    <span v-else class="bg-gray-100 text-gray-800 text-xs font-medium inline-flex items-center px-2.5 py-0.5 rounded mr-2 dark:bg-gray-700 dark:text-gray-300">
+                      <svg aria-hidden="true" class="mr-1 w-3 h-3" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"></path></svg>
+                      {{ dateDiff(peer.last_seen) }}
+                    </span>
                   </div>
                   <div class="inline-flex items-center text-base font-semibold text-gray-900 dark:text-white">
                     <!-- https://flowbite.com/docs/components/badge/ -->
@@ -142,7 +158,7 @@ export default {
       </div>
       <div v-if="selected_peer != null" class="flex flex-col mt-20 justify-center items-center px-2">
         <div>
-          <h2 class="mt-8 text-center text-2xl font-bold text-zinc-100 cursor-default select-none"> {{ selected_peer.name }} </h2>
+          <h1 class="mt-8 text-center text-2xl font-bold text-zinc-100 cursor-default select-none"> {{ selected_peer.name }} </h1>
           <div class=" text-sm text-zinc-300">
             <p class="text-center"> {{ selected_peer.dns_name }} </p>
           </div>
@@ -150,11 +166,20 @@ export default {
         <div class="w-full sm:max-w-md px-6 mt-2 mb-8">
           <div class="mt-8 space-y-8">
             <div class="mt-8 space-y-8 pl-4 pr-4 pt-4 pb-4 rounded border border-black-200 dark:border-white-700">
+              <div class="flex items-center justify-between">
+                <p class="text-center text-md font-medium text-gray-900 truncate dark:text-white">
+                  {{ selected_peer.dns_name }}
+                </p>
+                <button @click="CopyClipboard(selected_peer.dns_name)" type="button" class="text-blue-700 border border-blue-700 bg-white hover:bg-blue-700 hover:text-white focus:ring-4 focus:outline-none focus:ring-blue-300 font-medium rounded-lg text-sm p-2.5 text-center inline-flex items-center mr-2 dark:border-blue-500 dark:text-blue-500 dark:hover:text-white dark:focus:ring-blue-800">
+                  <svg height="16" viewBox="0 0 16 16" width="16" xmlns="http://www.w3.org/2000/svg"><path d="m0 3c0-1.644531 1.355469-3 3-3h5c1.644531 0 3 1.355469 3 3 0 .550781-.449219 1-1 1s-1-.449219-1-1c0-.570312-.429688-1-1-1h-5c-.570312 0-1 .429688-1 1v5c0 .570312.429688 1 1 1 .550781 0 1 .449219 1 1s-.449219 1-1 1c-1.644531 0-3-1.355469-3-3zm5 5c0-1.644531 1.355469-3 3-3h5c1.644531 0 3 1.355469 3 3v5c0 1.644531-1.355469 3-3 3h-5c-1.644531 0-3-1.355469-3-3zm2 0v5c0 .570312.429688 1 1 1h5c.570312 0 1-.429688 1-1v-5c0-.570312-.429688-1-1-1h-5c-.570312 0-1 .429688-1 1zm0 0" fill="#2e3436"/></svg>
+                  <span class="sr-only">Icon description</span>
+                </button>
+              </div>
               <div v-for="ip in selected_peer.ips" class="flex items-center justify-between">
                 <p class="text-center text-md font-medium text-gray-900 truncate dark:text-white">
                   {{ ip }}
                 </p>
-                <button type="button" class="text-blue-700 border border-blue-700 bg-white hover:bg-blue-700 hover:text-white focus:ring-4 focus:outline-none focus:ring-blue-300 font-medium rounded-lg text-sm p-2.5 text-center inline-flex items-center mr-2 dark:border-blue-500 dark:text-blue-500 dark:hover:text-white dark:focus:ring-blue-800">
+                <button @click="CopyClipboard(ip)" type="button" class="text-blue-700 border border-blue-700 bg-white hover:bg-blue-700 hover:text-white focus:ring-4 focus:outline-none focus:ring-blue-300 font-medium rounded-lg text-sm p-2.5 text-center inline-flex items-center mr-2 dark:border-blue-500 dark:text-blue-500 dark:hover:text-white dark:focus:ring-blue-800">
                   <svg height="16" viewBox="0 0 16 16" width="16" xmlns="http://www.w3.org/2000/svg"><path d="m0 3c0-1.644531 1.355469-3 3-3h5c1.644531 0 3 1.355469 3 3 0 .550781-.449219 1-1 1s-1-.449219-1-1c0-.570312-.429688-1-1-1h-5c-.570312 0-1 .429688-1 1v5c0 .570312.429688 1 1 1 .550781 0 1 .449219 1 1s-.449219 1-1 1c-1.644531 0-3-1.355469-3-3zm5 5c0-1.644531 1.355469-3 3-3h5c1.644531 0 3 1.355469 3 3v5c0 1.644531-1.355469 3-3 3h-5c-1.644531 0-3-1.355469-3-3zm2 0v5c0 .570312.429688 1 1 1h5c.570312 0 1-.429688 1-1v-5c0-.570312-.429688-1-1-1h-5c-.570312 0-1 .429688-1 1zm0 0" fill="#2e3436"/></svg>
                   <span class="sr-only">Icon description</span>
                 </button>
