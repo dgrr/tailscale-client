@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +17,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.design/x/clipboard"
 	"tailscale.com/client/tailscale"
+	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/types/key"
@@ -23,6 +27,7 @@ import (
 type App struct {
 	ctx           context.Context
 	client        tailscale.LocalClient
+	fileMod       chan struct{}
 	initClipboard sync.Once
 }
 
@@ -39,15 +44,36 @@ func notify(msg string) {
 // so we can call the runtime methods
 func (app *App) startup(ctx context.Context) {
 	app.ctx = ctx
+	app.fileMod = make(chan struct{}, 1)
 
 	notify("Tailscale started")
 
 	go app.watchFiles()
 	go app.watchIPN()
+
+	runtime.EventsOn(app.ctx, "file_upload", func(data ...interface{}) {
+		fmt.Println(data)
+	})
 }
 
 func (app *App) watchFiles() {
+	prevFiles := 0
+	for {
+		select {
+		case <-time.After(time.Second * 10):
+		case <-app.fileMod:
+		}
 
+		files, err := app.client.AwaitWaitingFiles(app.ctx, time.Second)
+		if err != nil {
+			log.Println(err)
+		}
+
+		if len(files) != prevFiles {
+			prevFiles = len(files)
+			runtime.EventsEmit(app.ctx, "update_files")
+		}
+	}
 }
 
 func (app *App) watchIPN() {
@@ -56,6 +82,7 @@ func (app *App) watchIPN() {
 		if err != nil {
 			log.Printf("loading IPN bus watcher: %s\n", err)
 			time.Sleep(time.Second)
+			continue
 		}
 
 		for {
@@ -65,11 +92,97 @@ func (app *App) watchIPN() {
 				break
 			}
 
+			if not.FilesWaiting != nil {
+				app.fileMod <- struct{}{}
+			}
+
 			runtime.EventsEmit(app.ctx, "update_all")
 
 			log.Printf("IPN bus update: %v\n", not)
 		}
 	}
+}
+
+func (app *App) UploadFile(dnsName string) {
+	status, err := app.client.Status(app.ctx)
+	if err != nil {
+		panic(err)
+	}
+
+	peers := status.Peers()
+
+	i := tl.SearchFn(peers, func(nodeKey key.NodePublic) bool {
+		peer := status.Peer[nodeKey]
+		return peer.DNSName == dnsName
+	})
+	if i == -1 {
+		return
+	}
+
+	peer := status.Peer[peers[i]]
+
+	filename, err := runtime.OpenFileDialog(app.ctx, runtime.OpenDialogOptions{
+		DefaultDirectory: func() string {
+			dir, _ := os.UserHomeDir()
+			return dir
+		}(),
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	file, err := os.Open(filename)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	stat, _ := file.Stat()
+
+	err = app.client.PushFile(app.ctx, peer.ID, stat.Size(), stat.Name(), file)
+	if err != nil {
+		log.Printf("error uploading file to %s: %s\n", dnsName, err)
+	}
+}
+
+func (app *App) AcceptFile(filename string) {
+	dir, err := runtime.OpenDirectoryDialog(app.ctx, runtime.OpenDialogOptions{
+		DefaultDirectory: func() string {
+			dir, _ := os.UserHomeDir()
+			return dir
+		}(),
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer func() {
+		app.RemoveFile(filename)
+	}()
+
+	r, _, err := app.client.GetWaitingFile(app.ctx, filename)
+	if err != nil {
+		panic(err)
+	}
+	defer r.Close()
+
+	file, err := os.Create(filepath.Join(dir, filename))
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	_, _ = io.Copy(file, r)
+}
+
+func (app *App) RemoveFile(filename string) {
+	log.Printf("Removing file %s\n", filename)
+
+	err := app.client.DeleteWaitingFile(app.ctx, filename)
+	if err != nil {
+		log.Printf("Removing file: %s: %s\n", filename, err)
+	}
+
+	app.fileMod <- struct{}{}
 }
 
 func (app *App) CurrentAccount() string {
@@ -132,6 +245,7 @@ func (app *App) CopyClipboard(s string) {
 			panic(err)
 		}
 	})
+	log.Printf("Copying \"%s\" to the clipboard\n", s)
 	clipboard.Write(clipboard.FmtText, []byte(s))
 }
 
@@ -153,6 +267,11 @@ func (app *App) Accounts() []string {
 	return names
 }
 
+type Instance struct {
+	Files      []File      `json:"files"`
+	Namespaces []Namespace `json:"namespaces"`
+}
+
 type Namespace struct {
 	Name  string `json:"name"`
 	Peers []Peer `json:"peers"`
@@ -172,10 +291,18 @@ type Peer struct {
 	LastSeen       time.Time `json:"last_seen"`
 }
 
+type File struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
 func (app *App) Self() Peer {
+	log.Printf("Requesting self")
+
 	status, err := app.client.Status(app.ctx)
 	if err != nil {
-		panic(err)
+		log.Printf("Requesting self: %s\n", err)
+		return Peer{}
 	}
 
 	self := status.Self
@@ -216,10 +343,26 @@ func splitPeerNamespace(dnsName string) (peerName, namespace string) {
 	return peerName, namespace
 }
 
-func (app *App) Peers() []Namespace {
+func (app *App) Files() []File {
+	files, err := app.client.AwaitWaitingFiles(app.ctx, time.Second)
+	if err != nil {
+		log.Println(err)
+		return nil
+	}
+
+	return tl.Map(files, func(file apitype.WaitingFile) File {
+		return File{
+			Name: file.Name,
+			Size: file.Size,
+		}
+	})
+}
+
+func (app *App) Namespaces() []Namespace {
 	status, err := app.client.Status(app.ctx)
 	if err != nil {
-		panic(err)
+		log.Printf("requesting instance: %s\n", err)
+		return nil
 	}
 
 	res := make([]Namespace, 0)
