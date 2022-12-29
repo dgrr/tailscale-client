@@ -24,12 +24,12 @@ export default {
       namespaces: null,
       self: {},
       selected_peer: null,
-      app_running: false,
+      app_running: true,
     }
   },
   methods: {
     load: async function() {
-      if (this.app_running) {
+      if (!this.app_running) {
         return;
       }
 
